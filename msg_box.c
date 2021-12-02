@@ -49,11 +49,12 @@ msg_box msg_box_init(const unsigned elt_size) {
     /* Initialize conditional var attributes
      * Check the available pthread cond variable options here: 
      * https://docs.oracle.com/cd/E19455-01/806-5257/6je9h032q/index.html
+     * using PRIVATE here as only multithreading is the target not multiprocessing
      * */
 
     pthread_condattr_t cattr;
     CHECK_NZ  (pthread_condattr_init(&cattr));
-    CHECK_NZ(pthread_condattr_setpshared(&cattr, PTHREAD_PROCESS_SHARED));
+    CHECK_NZ(pthread_condattr_setpshared(&cattr, PTHREAD_PROCESS_PRIVATE));
 
     /* Initializing the variable with attribute*/
     CHECK_NZ(pthread_cond_init(&(mbox->not_empty), &cattr));
