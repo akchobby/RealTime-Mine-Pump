@@ -36,7 +36,9 @@ void *periodic_task_body (void *parameters) {
 	  /*next trigger time of job*/
 	  add_timespec(&trigger, &trigger, &period);
 
-	  /*semaphore wait based on time, still to figure how it blocks*/
+	  /* semaphore wait based on time, if semaphore is initialised at 0 value, 
+	   * the decrement can't happen on wait hence the thread is blocked till timeout time.
+	   * https://man7.org/linux/man-pages/man3/sem_wait.3.html*/
 	  sem_timedwait(&timer, &trigger);
   }
 
