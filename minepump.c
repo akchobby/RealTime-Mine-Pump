@@ -18,6 +18,21 @@
 #define LowLevel 0
 #define HighLevel 1
 
+#define P1 96  
+#define P2 95  
+#define P3 94  
+#define P4 91 
+
+/****
+ * TO BE DONE:  the explanation of how if all threads have same priority 
+ * the msg_box fails
+ *
+ * Cause found the priority ceiling must be respected when using priority protect 
+ * mutex
+ * */
+
+
+
 /*****************************************************************************/
 /* These global variables support communication and synchronization
    between tasks
@@ -35,7 +50,18 @@ m_integer LvlWater, LvlMeth;
 */
 void WaterLevelMonitoring_Body(void) {
   int level = LowLevel;
+  //LvlWater->write(level);
+ 
+  printf("Water Measurement Started\n");
+  if(ReadHLS()){
+	level = HighLevel;
+  }else if(!ReadLLS()){
+	level = LowLevel;
+  }
 
+  MI_write(LvlWater, level);
+  printf("Water Measurement Finished\n");
+  CHECK_NZ(sem_post(&synchro));
 }
 
 /*****************************************************************************/
@@ -49,6 +75,22 @@ void WaterLevelMonitoring_Body(void) {
 void MethaneMonitoring_Body (void) {
   int level = Normal;
   BYTE MS;
+  printf("Methane Measurement Started\n");
+  MS = ReadMS();
+  if (MS >= MS_L2){
+
+	  level = Alarm2;
+
+  }else if(MS >= MS_L1){
+
+	  level = Alarm1;
+
+  }else{
+	  level = Normal;
+  }
+  MI_write(LvlMeth, level);
+  printf("Methane Measurement Finished\n");
+  CHECK_NZ(sem_post(&synchro));
 
 }
 
@@ -69,7 +111,30 @@ void *PumpCtrl_Body(void *no_argument) {
   int niveau_eau, niveau_alarme, alarme;
   int cmd=0;
   for (;;) {
-  }
+	  /*sporadic task requires to sleep till activated*/
+	  CHECK_NZ(sem_wait(&synchro));
+
+	  printf("Pump Control Started\n");
+	  niveau_eau = MI_read(LvlWater);
+	  niveau_alarme = MI_read(LvlMeth);
+	  if(niveau_alarme != Alarm2){
+		  if(niveau_eau == HighLevel){
+			  cmd = 1;
+		  }else{
+			  cmd =0;
+		  }
+		  
+		  alarme = (niveau_alarme == Alarm1)?1:0;
+	  }else{
+		  alarme = 1;
+		  cmd=0;
+	  }
+	  CmdPump(cmd);
+	  msg_box_send(mbox_alarm, (char*) &alarme);
+	  printf("Pump Control Finished\n");
+
+ }
+
 }
 
 /*****************************************************************************/
@@ -80,8 +145,10 @@ void *PumpCtrl_Body(void *no_argument) {
 void *CmdAlarm_Body() {
   int value;
   for (;;) {
+    printf("CmdAlarm Task Started\n");
     msg_box_receive(mbox_alarm,(char*)&value);
     CmdAlarm(value);
+    printf("CmdAlarm Task Finished\n");
   }
 }
 
@@ -94,24 +161,60 @@ int main(void) {
 
   pthread_t T3,T4;
   printf ("START\n");
-
   InitSimu(); /* Initialize simulator */
 
   /* Initialize communication and synchronization primitives */
-  mbox_alarm =
-  sem_init(&synchro,
-  LvlWater =
-  LvlMeth =
+  mbox_alarm = msg_box_init(sizeof(int));
+  sem_init(&synchro,0,0);
+  LvlWater = MI_init(90);
+  LvlMeth = MI_init(90);
 
   /* Create task WaterLevelMonitoring_Task */
+  struct timespec period_water;
+  period_water.tv_nsec = 250 * 1000 * 1000;
+  period_water.tv_sec = 0;
+
+  create_periodic_task(period_water, &WaterLevelMonitoring_Body, P3);
+  printf("Created Water measurement task\n");
 
   /* Create task MethaneMonitoring_Task */
+  struct timespec period_methane;
+  period_methane.tv_nsec = 100 * 1000 * 1000;
+  period_methane.tv_sec = 0;
 
-  /* Create task PumpCtrl_Task */
+  create_periodic_task(period_methane, &MethaneMonitoring_Body, P2);
+  printf("Created methane measurement task\n");
+
+  pthread_attr_t pump_attr, alarm_attr;
+  struct sched_param pump_param, alarm_param;
+
+ // CHECK_NZ(pthread_attr_getschedparam(&my_attr, &my_param));
+
+
+  /* Create task PumpCtrl_Task --------  */
+  
+  CHECK_NZ(pthread_attr_init(&pump_attr));
+  pump_param.sched_priority = P1;
+  CHECK_NZ(pthread_attr_setinheritsched(&pump_attr, PTHREAD_EXPLICIT_SCHED));
+  CHECK_NZ(pthread_attr_setschedpolicy(&pump_attr, SCHED_FIFO));
+  CHECK_NZ(pthread_attr_setschedparam(&pump_attr, &pump_param));
+
+  CHECK_NZ(pthread_create(&T3, &pump_attr , PumpCtrl_Body, NULL));
+  printf("Created pump control task\n");
 
   /* Create task CmdAlarm_Task */
+  
+  CHECK_NZ(pthread_attr_init(&alarm_attr));
+  alarm_param.sched_priority = P1;
+  CHECK_NZ(pthread_attr_setinheritsched(&alarm_attr, PTHREAD_EXPLICIT_SCHED));
+  CHECK_NZ(pthread_attr_setschedpolicy(&alarm_attr, SCHED_FIFO));
+  CHECK_NZ(pthread_attr_setschedparam(&alarm_attr, &alarm_param));
+
+  CHECK_NZ(pthread_create(&T4, &alarm_attr, CmdAlarm_Body, NULL));
+  printf("Created alarm task\n");
 
   pthread_join(T3,0);
+  pthread_join(T4,0);
 
 #ifndef RTEMS
   return 0;
